@@ -1,2 +1,0 @@
-# Important
-This plugin requires some pre-existing functions to be exported from `src/api/Notifications/Notifications.tsx` so, until this project gets uploaded to the main branch of Vencord you will need to modify the contents of the API's `Notifications.tsx` (Not to be confused with the plugins seperate Notifications.tsx) to [this modified version](https://raw.githubusercontent.com/ethan-davies/Vencord/9d9a391496d4dd5d6471adfbf4750770ee80142c/src/api/Notifications/Notifications.tsx)
