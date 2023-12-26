@@ -61,7 +61,11 @@ function setIgnoredUsers(): void {
 export default definePlugin({
     name: "InternalNotifications",
     description: "Receive notifications for internal events",
-    authors: [Devs.Ethan],
+    authors: [{
+        name: "Ethan",
+        id: 721717126523781240n
+        },
+    ],
     flux: {
         async MESSAGE_CREATE({ message, channelId }: IMessageCreate) {
             if (ignoredUsers.includes(message.author.id)) return;
