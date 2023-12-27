@@ -6,15 +6,20 @@ import { ChannelStore, UserStore, SelectedChannelStore, NavigationRouter, Relati
 import { Channel, Message, User } from "discord-types/general";
 import { RelationshipType } from "plugins/relationshipNotifier/types";
 
-let channelsToReceiveNotificationsFrom: string[] = [];
+let notifyFor: string[] = [];
 let ignoredUsers: string[] = [];
 
-function switchChannels(guildId: string | null, channelId: string, messageId?: string) {
+function switchChannels(guildId: string | null, channelId: string) {
     if (!ChannelStore.hasChannel(channelId)) return;
-    NavigationRouter.transitionTo(`/channels/${guildId ?? "@me"}/${channelId}`);
+    NavigationRouter.transitionTo(`/channels/${guildId ?? "@me"}/${channelId}/`);
 }
 
 const settings = definePluginSettings({
+    logMessages: {
+        description: "Choose if you want to log all messages to the Vencord notification log",
+        type: OptionType.BOOLEAN,
+        default: false,
+    },
     receiveDirectMessageNotifications: {
         description: "Choose whether to receive notifications for received messages",
         type: OptionType.BOOLEAN,
@@ -38,13 +43,13 @@ const settings = definePluginSettings({
     receiveNotificationsFromChannels: {
         description: "List of channel ids to receive all notifications from (separate with commas)",
         type: OptionType.STRING,
-        onChange: () => { channelsToReceiveNotificationsFrom = stringToList(settings.store.receiveNotificationsFromChannels); },
+        onChange: () => { notifyFor = stringToList(settings.store.receiveNotificationsFromChannels); },
         default: "",
     },
     ignoreUsers: {
         description: "Create a list of user ids to ignore all their notifications from (separate with commas)",
         type: OptionType.STRING,
-        onChange: () => { ignoredUsers = stringToList(settings.store.ignoreUsers); },
+        onChange: () => { ignoredUsers = stringToList(settings.store.ignoreUsers); console.log("ignoredUsers: " + ignoredUsers); },
         default: "",
     },
 });
@@ -74,12 +79,16 @@ export default definePlugin({
     authors: [Devs.Ethan],
     flux: {
         async MESSAGE_CREATE({ message, channelId }: IMessageCreate) {
-            if (ignoredUsers.includes(message.author.id)) return;
+            if (ignoredUsers.includes(message.author.id))
+                return;
+
             await receiveMessage(message, channelId);
         },
 
         async RELATIONSHIP_ADD({ relationship }) {
-            if (ignoredUsers.includes(relationship.user.id)) return;
+            if (ignoredUsers.includes(relationship.user.id))
+                return;
+
             await relationshipAdd(relationship.user, relationship.type);
         }
     },
@@ -87,7 +96,7 @@ export default definePlugin({
 
     start() {
         ignoredUsers = stringToList(settings.store.ignoreUsers);
-        channelsToReceiveNotificationsFrom = stringToList(settings.store.receiveNotificationsFromChannels);
+        notifyFor = stringToList(settings.store.receiveNotificationsFromChannels);
     }
 });
 
@@ -114,46 +123,62 @@ async function relationshipAdd(user: User, type: Number) {
 
 async function receiveMessage(message: Message, channelId: string) {
     const channel: Channel = await ChannelStore.getChannel(channelId);
+    const groupNoti = settings.store.receiveNotificationsFromGroups;
+    const dmNoti = settings.store.receiveDirectMessageNotifications;
 
-    if (!(channel.isDM() || channel.isGroupDM())) {
-        if (!channelsToReceiveNotificationsFrom.includes(channelId)) {
-            if (!settings.store.receiveServerNotificationsFromFriends) {
-                return;
-            } else {
-                if (!RelationshipStore.isFriend(message.author.id)) {
-                    return;
-                }
-            }
-        }
+    if (!shouldNotify(channel, message.author.id)) {
+        return;
     }
 
-    if (channel.id === SelectedChannelStore.getChannelId()) return; // Prevent notifications from showing when the user is in the channel
-    if (message.author.id === UserStore.getCurrentUser()?.id) return; // Prevent notifications from showing when the user sent the message
-
-    if (!settings.store.receiveNotificationsFromGroups && channel.isGroupDM()) return;
-    if (!settings.store.receiveDirectMessageNotifications && channel.isDM()) return;
-
-    const length = message.content.length ?? 0;
-    let body: string = message.content;
-    if (length > 30) {
-        body = body.slice(0, 30) + "...";
+    if (channel.id === SelectedChannelStore.getChannelId() || message.author.id === UserStore.getCurrentUser()?.id) {
+        return;
     }
 
-    if (body.length === 0) {
-        if (message.attachments.length > 0) {
-            body = "Sent an attachment";
-        } else if (message.stickers.length > 0) {
-            body = "Sent a sticker";
-        }
+    if (!dmNoti && channel.isDM() || !groupNoti && channel.isGroupDM()) {
+        return;
     }
 
-    const author = message.author.id;
-    const user: User = UserStore.getUser(author);
+    const body = getMessageBody(message);
+    const user: User = UserStore.getUser(message.author.id);
 
     await showNotification({
         icon: user.getAvatarURL(),
         title: `${message.author.username}`,
         body: body,
-        onClick: () => switchChannels(channel.guild_id, channel.id, message.id),
+        onClick: () => switchChannels(channel.guild_id, channel.id),
+        noPersist: !settings.store.logMessages,
     });
+}
+
+function shouldNotify(channel: Channel, authorId: string): boolean {
+    const all = notifyFor.includes(channel.id);
+    const friend = settings.store.receiveServerNotificationsFromFriends && RelationshipStore.isFriend(authorId);
+
+    return channel.isDM() || channel.isGroupDM() || all || friend;
+}
+
+function getMessageBody(message: Message): string {
+    const content = message.content;
+    const attachments = message.attachments;
+    const stickers = message.stickers;
+
+    if (content.length > 30) {
+        return content.slice(0, 30) + "...";
+    }
+
+    if (content.length === 0) {
+
+        if (attachments.length > 0) {
+
+            return "Sent an attachment";
+
+        } else if (stickers.length > 0) {
+
+            return "Sent a sticker";
+
+        }
+
+    }
+
+    return content;
 }
