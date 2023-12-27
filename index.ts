@@ -2,10 +2,11 @@ import definePlugin, { OptionType } from "@utils/types";
 import { Devs } from "@utils/constants";
 import { showNotification } from "./notifications/Notifications";
 import { definePluginSettings } from "@api/Settings";
-import { ChannelStore, UserStore, SelectedChannelStore, NavigationRouter } from "@webpack/common";
+import { ChannelStore, UserStore, SelectedChannelStore, NavigationRouter, RelationshipStore } from "@webpack/common";
 import { Channel, Message, User } from "discord-types/general";
 import { RelationshipType } from "plugins/relationshipNotifier/types";
 
+let channelsToReceiveNotificationsFrom: string[] = [];
 let ignoredUsers: string[] = [];
 
 function switchChannels(guildId: string | null, channelId: string, messageId?: string) {
@@ -29,12 +30,23 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         default: false,
     },
+    receiveServerNotificationsFromFriends: {
+        description: "Choose whether to receive notifications for new messages in servers from friends",
+        type: OptionType.BOOLEAN,
+        default: false,
+    },
+    receiveNotificationsFromChannels: {
+        description: "List of channel ids to receive all notifications from (separate with commas)",
+        type: OptionType.STRING,
+        onChange: () => { channelsToReceiveNotificationsFrom = stringToList(settings.store.receiveNotificationsFromChannels); },
+        default: "",
+    },
     ignoreUsers: {
         description: "Create a list of user ids to ignore all their notifications from (separate with commas)",
         type: OptionType.STRING,
-        onChange: () => { setIgnoredUsers(); },
+        onChange: () => { ignoredUsers = stringToList(settings.store.ignoreUsers); },
         default: "",
-    }
+    },
 });
 
 interface IMessageCreate {
@@ -42,30 +54,24 @@ interface IMessageCreate {
     message: Message;
 }
 
-function setIgnoredUsers(): void {
-    if (settings.store.ignoreUsers !== "") {
-        const newIgnoredUsers: string[] = [];
-        const ignoredUsersString = settings.store.ignoreUsers.replace(/\s/g, '');
-        const ignoredUsersArray = ignoredUsersString.split(",");
-        ignoredUsersArray.forEach((id) => {
-            newIgnoredUsers.push(id);
+function stringToList(str: string): string[] {
+    if (str !== "") {
+        const array: string[] = [];
+        const string = str.replace(/\s/g, '');
+        const splitArray = string.split(",");
+        splitArray.forEach((id) => {
+            array.push(id);
         });
 
-        ignoredUsers = newIgnoredUsers;
-        return;
+        return array;
     }
-
-    ignoredUsers = [];
+    return [];
 }
 
 export default definePlugin({
     name: "InternalNotifications",
     description: "Receive notifications for internal events",
-    authors: [{
-        name: "Ethan",
-        id: 721717126523781240n
-        },
-    ],
+    authors: [Devs.Ethan],
     flux: {
         async MESSAGE_CREATE({ message, channelId }: IMessageCreate) {
             if (ignoredUsers.includes(message.author.id)) return;
@@ -80,7 +86,8 @@ export default definePlugin({
     settings,
 
     start() {
-        setIgnoredUsers();
+        ignoredUsers = stringToList(settings.store.ignoreUsers);
+        channelsToReceiveNotificationsFrom = stringToList(settings.store.receiveNotificationsFromChannels);
     }
 });
 
@@ -108,9 +115,20 @@ async function relationshipAdd(user: User, type: Number) {
 async function receiveMessage(message: Message, channelId: string) {
     const channel: Channel = await ChannelStore.getChannel(channelId);
 
-    if (!(channel.isDM() || channel.isGroupDM())) return; // Filter out non-DMs and non-GroupDMs
+    if (!(channel.isDM() || channel.isGroupDM())) {
+        if (!channelsToReceiveNotificationsFrom.includes(channelId)) {
+            if (!settings.store.receiveServerNotificationsFromFriends) {
+                return;
+            } else {
+                if (!RelationshipStore.isFriend(message.author.id)) {
+                    return;
+                }
+            }
+        }
+    }
+
     if (channel.id === SelectedChannelStore.getChannelId()) return; // Prevent notifications from showing when the user is in the channel
-    if (message.author.id === UserStore.getCurrentUser()?.id) return;
+    if (message.author.id === UserStore.getCurrentUser()?.id) return; // Prevent notifications from showing when the user sent the message
 
     if (!settings.store.receiveNotificationsFromGroups && channel.isGroupDM()) return;
     if (!settings.store.receiveDirectMessageNotifications && channel.isDM()) return;
